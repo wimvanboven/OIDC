@@ -1,3 +1,4 @@
+from lib2to3.pytree import generate_matches
 from urllib.parse import urlencode
 import requests
 import json
@@ -6,6 +7,8 @@ import rsa
 import time
 import random
 import string
+import secrets
+from hashlib import sha256
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -41,16 +44,22 @@ class OIDC:
         CIBA = "urn:openid:params:grant-type:ciba"
         CLIENT_CREDENTIALS='client_credentials'
 
-    def __init__(self, well_known_url="", client_ID="", client_secret=""):
+    def __init__(self, well_known_url="", client_ID="", client_secret="", pkce = 'False'):
         self.client_ID = client_ID
         self.client_secret = client_secret
         self.authorization_endpoint = ""
         self.token_endpoint = ""
         self.assertion = ""
         self.ciba_endpoint = ""
+        self.code_verifier = ''
+        self.code_challenge = ''
+        self.pkce = pkce
 
         if len(well_known_url):
             self.configure(well_known_url)
+
+        if self.pkce:
+            self.generate_cv_cc()
 
     def _is_secret(self):
         return bool(len(self.client_secret))
@@ -121,7 +130,6 @@ class OIDC:
         return t
 
     def auth_code_link(self, redirect_uri, scope="", state="", query_params=None):
-        # TODO: add PKCE for public client
         data = {
             'response_type': 'code',
             'client_id': self.client_ID,
@@ -135,9 +143,22 @@ class OIDC:
         if len(state):
             data['state'] = state
 
+        if self.pkce:
+            data['code_challenge_method'] = 'S256'
+            data['code_challenge'] = self.code_challenge
+
+        if query_params != None:
+            data = data + query_params
         url = self.authorization_endpoint + "?" + \
-            (urlencode({**data, **query_params}))
+            (urlencode({**data}))
         return url
+
+    def generate_cv_cc(self):
+        self.code_verifier = secrets.token_urlsafe(48) 
+        hashed = sha256(self.code_verifier.encode('ascii')).digest()
+        encoded = base64.urlsafe_b64encode(hashed)
+        self.code_challenge = encoded.decode('ascii')[:-1]
+        return
 
     def grant_token_exchange(self, access_token: JWT, scope="", audience=''):
         # exchange token based on existing internal keycloak token
